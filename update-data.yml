@@ -1,0 +1,21 @@
+name: Update dashboard data
+on:
+  push:
+    paths: ['KWH_REPORT.xlsx']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install openpyxl pandas numpy
+      - run: python build_data.py KWH_REPORT.xlsx
+      - run: |
+          git config user.name "ems-bot"
+          git config user.email "ems-bot@users.noreply.github.com"
+          git add data.js
+          git diff --cached --quiet || (git commit -m "Update dashboard data" && git push)

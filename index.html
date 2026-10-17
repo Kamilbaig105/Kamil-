@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EMS – Energy Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#14202b;--mut:#5d6b78;--line:#e3e7ec;--a:#0f766e;--b:#d97706;--acc:#e8f3f2;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1519;--card:#171f25;--fg:#e6edf2;--mut:#93a1ad;--line:#27323a;--a:#2dd4bf;--b:#fbbf24;--acc:#17302f}}
+:root[data-theme="dark"]{--bg:#0f1519;--card:#171f25;--fg:#e6edf2;--mut:#93a1ad;--line:#27323a;--a:#2dd4bf;--b:#fbbf24;--acc:#17302f}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:18px 14px 40px}
+h1{font-size:21px;margin:0}.sub{color:var(--mut);font-size:13px;margin:2px 0 14px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+button,input{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 11px}
+button{cursor:pointer}button.on{background:var(--a);border-color:var(--a);color:#fff}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.v{font-size:26px;font-weight:650;margin:3px 0}.d{font-size:12.5px;color:var(--mut)}
+.up{color:#c2410c}.dn{color:#15803d}
+.row{display:grid;gap:12px;grid-template-columns:2fr 1fr;margin-bottom:12px}
+@media(max-width:760px){.row{grid-template-columns:1fr}}
+.ch{position:relative;height:260px}.card h2{font-size:14px;margin:0 0 8px}
+details{font-size:13px;color:var(--mut)}summary{cursor:pointer;color:var(--fg)}
+li{margin:3px 0}
+</style></head><body><main>
+<h1>EMS – Energy Dashboard</h1>
+<div class="sub">Fiber Bleaching · daily kWh from the KWH report · data through <b id="last"></b> · updated from the daily KWH report</div>
+<div class="bar">
+<button data-r="30">30 days</button><button data-r="90">90 days</button><button data-r="365">12 months</button><button data-r="0">All</button>
+<input type="date" id="from"><span class="d">to</span><input type="date" id="to">
+</div>
+<div class="grid">
+<div class="card"><div class="k">Total consumption</div><div class="v" id="k1"></div><div class="d" id="k1d"></div></div>
+<div class="card"><div class="k">Daily average</div><div class="v" id="k2"></div><div class="d" id="k2d"></div></div>
+<div class="card"><div class="k">Daily consumption</div><div class="v" id="k5"></div><div class="d" id="k5d"></div></div>
+<div class="card"><div class="k">Peak day</div><div class="v" id="k3"></div><div class="d" id="k3d"></div></div>
+<div class="card"><div class="k">Solar share</div><div class="v" id="k4"></div><div class="d" id="k4d"></div></div>
+<div class="card"><div class="k">Last 1 day</div><div class="v" id="k6"></div><div class="d" id="k6d"></div></div>
+<div class="card"><div class="k">Last 7 days</div><div class="v" id="k7"></div><div class="d" id="k7d"></div></div>
+</div>
+<div class="card" style="margin-bottom:12px"><h2>Daily consumption (kWh) <span style="float:right"><button data-m="bar" class="on">Columns</button> <button data-m="line">Line</button></span></h2><div class="ch"><canvas id="c1"></canvas></div></div>
+<div class="row">
+<div class="card"><h2>Monthly consumption (MWh)</h2><div class="ch"><canvas id="c2"></canvas></div></div>
+<div class="card"><h2>Share by panel (selected range)</h2><div class="ch"><canvas id="c3"></canvas></div></div>
+</div>
+<div class="card"><details><summary>Data notes</summary><ul id="notes"></ul></details></div>
+</main>
+<script src="data.js"></script>
+<script>
+const D=window.EMS_DATA||{panels:[],rows:[['2000-01-01',0,0,0,0,0,0,0,0,0,0,0,0,0]],notes:[]};
+const R=D.rows.map(r=>[new Date(r[0]+'T00:00:00Z'),...r.slice(1)]);
+const $=id=>document.getElementById(id);
+const iso=d=>d.toISOString().slice(0,10);
+const fmt=(n,p=0)=>n.toLocaleString('en-US',{maximumFractionDigits:p,minimumFractionDigits:p});
+const lastD=R[R.length-1][0],firstD=R[0][0];
+$('last').textContent=lastD.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});
+let from=new Date(lastD-29*864e5),to=lastD,charts={},mode='bar';
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function sel(a,b){return R.filter(r=>r[0]>=a&&r[0]<=b)}
+function sum(rows,i){let s=0,n=0;rows.forEach(r=>{if(r[i]!=null){s+=r[i];n++}});return[s,n]}
+function setRange(a,b){from=a<firstD?firstD:a;to=b>lastD?lastD:b;$('from').value=iso(from);$('to').value=iso(to);
+document.querySelectorAll('button[data-r]').forEach(x=>x.classList.remove('on'));render()}
+document.querySelectorAll('button[data-r]').forEach(btn=>btn.onclick=()=>{const n=+btn.dataset.r;setRange(n?new Date(lastD-(n-1)*864e5):firstD,lastD);btn.classList.add('on')});
+$('from').onchange=e=>e.target.value&&setRange(new Date(e.target.value+'T00:00:00Z'),to);
+$('to').onchange=e=>e.target.value&&setRange(from,new Date(e.target.value+'T00:00:00Z'));
+function kpis(rows){
+const [t,n]=sum(rows,1),span=Math.round((to-from)/864e5)+1,prev=sel(new Date(from-span*864e5),new Date(from-864e5));
+const [pt,pn]=sum(prev,1);
+$('k1').textContent=fmt(t/1000,1)+' MWh';
+if(pn>=span*0.6&&pt>0){const c=(t/pt-1)*100;$('k1d').innerHTML='<span class="'+(c>0?'up':'dn')+'">'+(c>0?'▲ ':'▼ ')+fmt(Math.abs(c),1)+'%</span> vs previous '+span+' days'}else $('k1d').textContent='No comparable previous period';
+$('k2').textContent=n?fmt(t/n)+' kWh':'–';$('k2d').textContent=n+' days with readings';
+let ld=null;for(let i=rows.length-1;i>=0;i--)if(rows[i][1]!=null){ld=rows[i];break}
+$('k5').textContent=ld?fmt(ld[1])+' kWh':'–';$('k5d').textContent=ld?ld[0].toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'})+(n?' · '+(ld[1]>=t/n?'▲ ':'▼ ')+fmt(Math.abs(ld[1]/(t/n)-1)*100)+'% vs average':''):'';
+let pk=null;rows.forEach(r=>{if(r[1]!=null&&(!pk||r[1]>pk[1]))pk=r});
+$('k3').textContent=pk?fmt(pk[1])+' kWh':'–';$('k3d').textContent=pk?pk[0].toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}):'';
+let s=0,tt=0,sd=0;rows.forEach(r=>{if(r[13]!=null&&r[1]!=null){s+=r[13];tt+=r[1];sd++}});
+if(sd){$('k4').textContent=fmt(s/tt*100,1)+'%';$('k4d').textContent=fmt(s/1000,1)+' MWh from solar ('+sd+' days)'}else{$('k4').textContent='n/a';$('k4d').textContent='No solar meter in this range'}}
+function pct(c,s){return '<span class="'+(c>0?'up':'dn')+'">'+(c>0?'▲ ':'▼ ')+fmt(Math.abs(c),1)+'%</span> '+s}
+function dd(d){return d.toLocaleDateString('en-GB',{day:'numeric',month:'short',timeZone:'UTC'})}
+function recent(){
+const ok=R.filter(r=>r[1]!=null),l=ok[ok.length-1],p=ok[ok.length-2];
+$('k6').textContent=fmt(l[1])+' kWh';$('k6d').innerHTML=dd(l[0])+(p&&p[1]>0?' · '+pct((l[1]/p[1]-1)*100,'vs previous day'):'');
+const a=sel(new Date(lastD-6*864e5),lastD),b=sel(new Date(lastD-13*864e5),new Date(lastD-7*864e5)),[t,n]=sum(a,1),[pt]=sum(b,1);
+$('k7').textContent=fmt(t/1000,1)+' MWh';$('k7d').innerHTML=fmt(n?t/n:0)+' kWh/day · '+dd(new Date(lastD-6*864e5))+'–'+dd(lastD)+(pt>0?'<br>'+pct((t/pt-1)*100,'vs previous 7 days'):'')}
+function draw(id,cfg){if(charts[id])charts[id].destroy();charts[id]=new Chart($(id),cfg)}
+function render(){
+Chart.defaults.color=css('--mut');Chart.defaults.borderColor=css('--line');Chart.defaults.font.family='system-ui,sans-serif';
+const rows=sel(from,to),A=css('--a'),B=css('--b');kpis(rows);recent();
+const labels=rows.map(r=>iso(r[0])),vals=rows.map(r=>r[1]);
+const ma=vals.map((_,i)=>{const w=vals.slice(Math.max(0,i-6),i+1).filter(x=>x!=null);return w.length>=4?w.reduce((a,b)=>a+b,0)/w.length:null});
+draw('c1',{type:mode,data:{labels,datasets:[mode==='bar'?{label:'Daily kWh',data:vals,backgroundColor:A,borderRadius:2,maxBarThickness:18}:{label:'Daily kWh',data:vals,borderColor:A,backgroundColor:A+'22',fill:true,pointRadius:0,borderWidth:1.5,tension:.15},{label:'7-day average',type:'line',data:ma,borderColor:B,pointRadius:0,borderWidth:2,borderDash:[5,3]}]},
+options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{ticks:{maxTicksLimit:8,maxRotation:0}},y:{beginAtZero:true}},plugins:{legend:{labels:{boxWidth:12}}}}});
+const m={};R.forEach(r=>{const k=iso(r[0]).slice(0,7);m[k]=m[k]||{t:0,n:0};if(r[1]!=null){m[k].t+=r[1];m[k].n++}});
+const mk=Object.keys(m);
+draw('c2',{type:'bar',data:{labels:mk,datasets:[{label:'MWh',data:mk.map(k=>m[k].n?+(m[k].t/1000).toFixed(1):null),backgroundColor:mk.map(k=>k>=iso(from).slice(0,7)&&k<=iso(to).slice(0,7)?A:A+'55')}]},
+options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{maxTicksLimit:9,maxRotation:0}},y:{beginAtZero:true}},plugins:{legend:{display:false},tooltip:{callbacks:{afterLabel:c=>m[mk[c.dataIndex]].n+' days recorded'}}}}});
+const ps=D.panels.map((p,i)=>[p,sum(rows,i+2)[0]]).filter(x=>x[1]>0).sort((a,b)=>b[1]-a[1]),tot=ps.reduce((a,x)=>a+x[1],0)||1;
+draw('c3',{type:'bar',data:{labels:ps.map(x=>x[0]),datasets:[{data:ps.map(x=>+(x[1]/tot*100).toFixed(1)),backgroundColor:A}]},
+options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{callback:v=>v+'%'}}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.x+'% · '+fmt(ps[c.dataIndex][1]/1000,1)+' MWh'}}}}})}
+$('notes').innerHTML=D.notes.map(n=>'<li><b>'+n[0]+'</b> – '+n[1]+'</li>').join('')+'<li>Total = the report’s “Total kWh consumed by FB” column (available from Sep 2024); earlier months use the sum of the panel readings. Panel shares use the panel readings (Busway 1 and 2, MCC-1 to 5, LPDB-1, LPDB-2, LPDB Office). Solar share = solar meters ÷ total, available from July 2025.</li>';
+document.querySelectorAll('button[data-m]').forEach(b=>b.onclick=()=>{mode=b.dataset.m;document.querySelectorAll('button[data-m]').forEach(x=>x.classList.toggle('on',x===b));render()});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',render);
+setRange(from,to);document.querySelector('button[data-r="90"]').click();
+</script></body></html>
